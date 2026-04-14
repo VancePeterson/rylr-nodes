@@ -1,0 +1,134 @@
+# Node registry — the source of truth for every LoRa node on this network.
+#
+# Add an entry here, re-run scripts/publish_discovery.py, and Home Assistant
+# picks up the new entities. No gateway reflash required.
+#
+# Schema per node:
+#   id:          LoRa address (1-255, must be unique, 1 is reserved for the gateway)
+#   name:        Human-friendly device name shown in HA
+#   model:       Free-form hardware description (shown on the HA device page)
+#   entities:    List of HA entities derived from the node's state payload
+#     component:     mqtt component type (sensor, binary_sensor, ...)
+#     key:           unique slug used in the discovery object_id
+#     name:          entity name in HA
+#     value_template: Jinja template applied to the retained state topic
+#     device_class:  (optional) HA device class
+#     unit:          (optional) unit_of_measurement
+#     state_class:   (optional) measurement / total / total_increasing
+#     expire_after:  (optional) seconds after which HA marks the entity unavailable
+
+nodes:
+  - id: 2
+    name: "Heartbeat Node"
+    model: "ESP32 + RYLR998 (heartbeat example)"
+    entities:
+      - component: sensor
+        key: rssi
+        name: "RSSI"
+        value_template: "{{ value_json.rssi }}"
+        state_topic_suffix: meta
+        device_class: signal_strength
+        unit: "dBm"
+        state_class: measurement
+      - component: sensor
+        key: snr
+        name: "SNR"
+        value_template: "{{ value_json.snr }}"
+        state_topic_suffix: meta
+        unit: "dB"
+        state_class: measurement
+      - component: sensor
+        key: last_seq
+        name: "Last Sequence"
+        value_template: "{{ value_json.s }}"
+        state_topic_suffix: state
+        state_class: total_increasing
+        expire_after: 300
+
+  - id: 3
+    name: "Deep Sleep Environmental"
+    model: "ESP32 + RYLR998 + BME280 (battery, deep sleep)"
+    entities:
+      - component: sensor
+        key: temperature
+        name: "Temperature"
+        value_template: "{{ value_json.d.tc }}"
+        state_topic_suffix: state
+        device_class: temperature
+        unit: "°C"
+        state_class: measurement
+        expire_after: 1800
+      - component: sensor
+        key: humidity
+        name: "Humidity"
+        value_template: "{{ value_json.d.rh }}"
+        state_topic_suffix: state
+        device_class: humidity
+        unit: "%"
+        state_class: measurement
+        expire_after: 1800
+      - component: sensor
+        key: pressure
+        name: "Pressure"
+        value_template: "{{ value_json.d.p }}"
+        state_topic_suffix: state
+        device_class: atmospheric_pressure
+        unit: "hPa"
+        state_class: measurement
+        expire_after: 1800
+
+  - id: 4
+    name: "Deep Sleep Valve"
+    model: "ESP32 + RYLR998 + latching solenoid (battery, deep sleep)"
+    entities:
+      - component: binary_sensor
+        key: valve_open
+        name: "Valve Open"
+        value_template: "{{ 'ON' if value_json.d.open else 'OFF' }}"
+        state_topic_suffix: state
+        device_class: opening
+
+  - id: 5
+    name: "Porch Monitor"
+    model: "ESP32 + RYLR998 + PIR + DS18B20 (mains powered)"
+    entities:
+      - component: binary_sensor
+        key: motion
+        name: "Motion"
+        value_template: "{{ 'ON' if value_json.d.motion else 'OFF' }}"
+        state_topic_suffix: state
+        device_class: motion
+      - component: sensor
+        key: temperature
+        name: "Temperature"
+        value_template: "{{ value_json.d.tc }}"
+        state_topic_suffix: state
+        device_class: temperature
+        unit: "°C"
+        state_class: measurement
+        expire_after: 300
+
+  - id: 6
+    name: "Relay Board"
+    model: "ESP32 + RYLR998 + 4-channel relay (mains powered)"
+    entities:
+      - component: binary_sensor
+        key: ch1
+        name: "Channel 1"
+        value_template: "{{ 'ON' if value_json.d.ch[0] else 'OFF' }}"
+        state_topic_suffix: state
+      - component: binary_sensor
+        key: ch2
+        name: "Channel 2"
+        value_template: "{{ 'ON' if value_json.d.ch[1] else 'OFF' }}"
+        state_topic_suffix: state
+      - component: binary_sensor
+        key: ch3
+        name: "Channel 3"
+        value_template: "{{ 'ON' if value_json.d.ch[2] else 'OFF' }}"
+        state_topic_suffix: state
+      - component: binary_sensor
+        key: ch4
+        name: "Channel 4"
+        value_template: "{{ 'ON' if value_json.d.ch[3] else 'OFF' }}"
+        state_topic_suffix: state

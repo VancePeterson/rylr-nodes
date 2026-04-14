@@ -1,0 +1,125 @@
+substitutions:
+  # WT32-ETH01: the LAN8720 PHY uses GPIO0/17/18/19/21/22/23/25/26/27.
+  # GPIO14 and GPIO15 are free and exposed on the board header.
+  lora_tx_pin: GPIO14
+  lora_rx_pin: GPIO15
+
+esphome:
+  name: lora-gateway
+  friendly_name: Lora Gateway
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    mode: CLK_EXT_IN
+    pin: 0
+  phy_addr: 1
+  power_pin: GPIO16
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: ""
+
+ota:
+  - platform: esphome
+    password: ""
+
+mqtt:
+  id: mqtt_client
+  broker: !secret mqtt_broker
+  port: 1883
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  topic_prefix: lora/lora-gateway
+  on_message:
+    # Raw AT passthrough — publish any AT command here to poke the module directly.
+    - topic: lora/lora-gateway/at/send
+      then:
+        - uart.write:
+            id: rylr_uart
+            data: !lambda |-
+              std::string cmd = x + "\r\n";
+              return std::vector<uint8_t>(cmd.begin(), cmd.end());
+
+    # Command bus — HA publishes a full envelope here, gateway routes by "n".
+    # Payload must be JSON like {"n":2,"s":42,"t":"set_interval","d":{"sec":300}}
+    - topic: lora/cmd
+      then:
+        - uart.write:
+            id: rylr_uart
+            data: !lambda |-
+              const std::string &payload = x;
+              size_t npos = payload.find("\"n\"");
+              if (npos == std::string::npos) return std::vector<uint8_t>();
+              size_t colon = payload.find(':', npos);
+              if (colon == std::string::npos) return std::vector<uint8_t>();
+              int addr = atoi(payload.substr(colon + 1).c_str());
+              if (addr <= 0 || addr > 255) return std::vector<uint8_t>();
+              char cmd[320];
+              int n = snprintf(cmd, sizeof(cmd), "AT+SEND=%d,%d,%s\r\n",
+                               addr, (int)payload.size(), payload.c_str());
+              if (n <= 0) return std::vector<uint8_t>();
+              return std::vector<uint8_t>(cmd, cmd + n);
+
+uart:
+  id: rylr_uart
+  tx_pin: ${lora_tx_pin}
+  rx_pin: ${lora_rx_pin}
+  baud_rate: 115200
+  rx_buffer_size: 512
+  debug:
+    direction: BOTH
+    dummy_receiver: true
+    after:
+      delimiter: "\r\n"
+    sequence:
+      - lambda: |-
+          UARTDebug::log_string(direction, bytes);
+          if (direction != UART_DIRECTION_RX) return;
+
+          std::string line(bytes.begin(), bytes.end());
+          while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+            line.pop_back();
+          if (line.rfind("+RCV=", 0) != 0) return;
+
+          // +RCV=<addr>,<len>,<data>,<rssi>,<snr>
+          // <data> may contain commas (it's JSON), so we use <len> to slice it.
+          size_t p1 = line.find(',', 5);
+          if (p1 == std::string::npos) return;
+          size_t p2 = line.find(',', p1 + 1);
+          if (p2 == std::string::npos) return;
+
+          int addr = atoi(line.substr(5, p1 - 5).c_str());
+          int len  = atoi(line.substr(p1 + 1, p2 - p1 - 1).c_str());
+          size_t data_start = p2 + 1;
+          if (data_start + (size_t)len + 1 > line.size()) return;
+          std::string data = line.substr(data_start, len);
+          size_t after_data = data_start + len;
+          if (line[after_data] != ',') return;
+          size_t rssi_start = after_data + 1;
+          size_t snr_comma  = line.find(',', rssi_start);
+          if (snr_comma == std::string::npos) return;
+          int rssi = atoi(line.substr(rssi_start, snr_comma - rssi_start).c_str());
+          int snr  = atoi(line.substr(snr_comma + 1).c_str());
+
+          char topic[64];
+          snprintf(topic, sizeof(topic), "lora/node/%d/state", addr);
+          id(mqtt_client).publish(std::string(topic), data, 0, true);
+
+          char meta_topic[64];
+          snprintf(meta_topic, sizeof(meta_topic), "lora/node/%d/meta", addr);
+          char meta[128];
+          snprintf(meta, sizeof(meta),
+                   "{\"rssi\":%d,\"snr\":%d,\"uptime\":%u}",
+                   rssi, snr, (unsigned)(millis() / 1000));
+          id(mqtt_client).publish(std::string(meta_topic), std::string(meta), 0, true);
