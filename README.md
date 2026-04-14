@@ -327,4 +327,4 @@ hears and the registry-driven discovery teaches HA what the fields mean.
 
 ## License
 
-MIT. See `LICENSE` (add one before publishing).
+GNU. See `LICENSE`
